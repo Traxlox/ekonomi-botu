@@ -1,0 +1,35 @@
+name: Ekonomi Botu Otomasyonu
+
+on:
+  schedule:
+    # Saatler UTC (Dünya saati) iledir. Türkiye UTC+3 olduğu için 3 saat geriden yazarız.
+    # 06:00 UTC -> 09:00 TR
+    # 10:00 UTC -> 13:00 TR
+    # 15:30 UTC -> 18:30 TR
+    - cron: '0 6 * * *'
+    - cron: '0 10 * * *'
+    - cron: '30 15 * * *'
+  # Manuel tetiklemek için buton ekler
+  workflow_dispatch:
+
+jobs:
+  calistir:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodları Çek
+        uses: actions/checkout@v3
+
+      - name: Python Kur
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Kütüphaneleri Yükle
+        run: pip install -r requirements.txt
+
+      - name: Botu Çalıştır
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_ALICILAR: ${{ secrets.TELEGRAM_ALICILAR }}
+        run: python main.py
