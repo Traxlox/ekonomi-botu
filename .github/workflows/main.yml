@@ -2,15 +2,17 @@ name: Ekonomi Botu Otomasyonu
 
 on:
   schedule:
-    # Saatler UTC (Dünya saati) iledir. Türkiye UTC+3 olduğu için 3 saat geriden yazarız.
-    # 06:00 UTC -> 09:00 TR
-    # 10:00 UTC -> 13:00 TR
-    # 15:30 UTC -> 18:30 TR
-    - cron: '0 6 * * *'
-    - cron: '0 10 * * *'
-    - cron: '30 15 * * *'
-  # Manuel tetiklemek için buton ekler
-  workflow_dispatch:
+    # Almanya Saatine Göre Ayarlandı (UTC+1)
+    # Sabah 09:00 olsun diye -> 08:00
+    - cron: '0 8 * * *'
+    
+    # Öğlen 13:00 olsun diye -> 12:00
+    - cron: '0 12 * * *'
+    
+    # Akşam 18:30 olsun diye -> 17:30
+    - cron: '30 17 * * *'
+    
+  workflow_dispatch: # Manuel tetikleme butonu
 
 jobs:
   calistir:
