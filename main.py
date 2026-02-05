@@ -205,4 +205,6 @@ if __name__ == "__main__":
         sys.exit(0)
 
     model_listesi = modelleri_sirala()
-    son
+    sonuc = gemini_analiz_yap(haberler, model_listesi)
+    
+    if sonuc: telegrama_gonder(sonuc, ALICI_LISTESI)
