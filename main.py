@@ -5,56 +5,73 @@ import os
 import requests
 import feedparser
 
-# GitHub Actions'da .env dosyası olmadığı için load_dotenv'e gerek yok.
-# Şifreleri direkt sistemin hafızasından (Environment Variables) okuyacak.
-
 # --- AYARLAR ---
 API_KEY = os.environ.get("GOOGLE_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-
-# ID'leri virgülle ayrılmış tek bir metin olarak alacağız: "112233,445566"
 ALICILAR_STR = os.environ.get("TELEGRAM_ALICILAR") 
 ALICI_LISTESI = ALICILAR_STR.split(",") if ALICILAR_STR else []
 
-# --- KAYNAKLAR ---
+# --- ŞİRKET VE HİSSE ODAKLI KAYNAKLAR ---
 RSS_URLS = [
-    "https://tr.investing.com/rss/news_1.rss",
-    "https://tr.investing.com/rss/news_25.rss",
-    "https://tr.investing.com/rss/news_301.rss",
-    "https://www.bloomberght.com/rss",
-    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664"
+    "https://tr.investing.com/rss/stock_Market.rss", # Hisse Senedi Piyasası
+    "http://feeds.reuters.com/reuters/businessNews", # Reuters Business (Dünyanın en iyisi)
+    "https://www.bloomberght.com/rss",               # Bloomberg HT (Yerel Şirketler)
+    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", # CNBC Teknoloji
+    "https://tr.cointelegraph.com/rss"               # Kripto Kurumsal
 ]
 
 def telegrama_gonder(mesaj, alicilar):
-    if not alicilar: 
-        print("⚠️ Alıcı listesi boş.")
-        return
+    if not alicilar: return
     print(f"📤 Rapor {len(alicilar)} kişiye gönderiliyor...")
     for kisi_id in alicilar:
-        kisi_id = kisi_id.strip() # Boşlukları temizle
+        kisi_id = kisi_id.strip()
         if not kisi_id: continue
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {"chat_id": kisi_id, "text": mesaj}
         try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            payload = {"chat_id": kisi_id, "text": mesaj}
             requests.post(url, json=payload)
             print(f"✅ Gönderildi -> {kisi_id}")
         except Exception as e:
             print(f"❌ Hata ({kisi_id}): {e}")
 
-def calisan_modeli_bul():
-    print("🔍 Google model deposu taranıyor...")
+def modelleri_sirala():
+    """Modelleri zeka sırasına göre dizer: Önce PRO, sonra FLASH."""
+    print("🔍 Modeller taranıyor ve sıralanıyor...")
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
+    
+    pro_modeller = []
+    flash_modeller = []
+    
     try:
         response = requests.get(url)
         data = response.json()
-        if "error" in data: return None
         
-        # Öncelik: Flash (Hızlı) -> Pro (Zeki)
+        if "error" in data:
+            print("⚠️ Model listesi alınamadı, varsayılanlar kullanılacak.")
+            return ["models/gemini-1.5-pro", "models/gemini-1.5-flash"]
+
         for model in data.get('models', []):
-            if 'flash' in model['name'] and 'generateContent' in model.get('supportedGenerationMethods', []):
-                return model['name']
-        return "models/gemini-1.5-flash"
-    except: return "models/gemini-1.5-flash"
+            isim = model['name']
+            yetenekler = model.get('supportedGenerationMethods', [])
+            
+            if 'generateContent' in yetenekler:
+                # Modelleri sınıflandır
+                if 'pro' in isim:
+                    pro_modeller.append(isim)
+                elif 'flash' in isim:
+                    flash_modeller.append(isim)
+        
+        # LİSTEYİ BİRLEŞTİR: Önce Zekiler (Pro), Sonra Hızlılar (Flash)
+        # 'latest' olanları listenin en başına alalım
+        pro_modeller.sort(key=lambda x: 'latest' in x, reverse=True)
+        flash_modeller.sort(key=lambda x: 'latest' in x, reverse=True)
+        
+        sirali_liste = pro_modeller + flash_modeller
+        print(f"📋 Kullanılacak Sıralama: {len(sirali_liste)} model bulundu.")
+        return sirali_liste
+
+    except:
+        return ["models/gemini-1.5-pro", "models/gemini-1.5-flash"]
 
 def haberleri_cek():
     print("📡 Haberler taranıyor...")
@@ -63,7 +80,8 @@ def haberleri_cek():
         try:
             feed = feedparser.parse(url)
             if not hasattr(feed, 'entries') or not feed.entries: continue
-            for entry in feed.entries[:2]: 
+            # Her kaynaktan en yeni 3 haberi al
+            for entry in feed.entries[:3]: 
                 baslik = entry.get("title", "")
                 ozet = entry.get("summary", entry.get("description", ""))
                 ozet = ozet.replace("<br>", " ").replace("<p>", "").replace("</p>", "")
@@ -71,41 +89,101 @@ def haberleri_cek():
         except: continue
     return toplanan_metin
 
-def geminiye_sor(metin, model_ismi):
-    if not model_ismi.startswith("models/"): model_ismi = f"models/{model_ismi}"
-    url = f"https://generativelanguage.googleapis.com/v1beta/{model_ismi}:generateContent?key={API_KEY}"
-    headers = {'Content-Type': 'application/json'}
+def gemini_analiz_yap(haberler, model_listesi):
+    """Listeki modelleri sırayla dener. Biri hata verirse diğerine geçer."""
     
     prompt = f"""
-    Sen kıdemli bir analistsin. Haberleri yorumla.
-    HABERLER: {metin}
-    KURALLAR: İsim kullanma. Somut veriler ver. Emojisiz, kurumsal dil.
+    Sen 'Kurumsal İstihbarat Uzmanısın'. Görevin genel piyasa yorumu yapmak DEĞİL, haberlerin içindeki SOMUT ŞİRKET HAREKETLERİNİ avlamaktır.
     
-    ŞABLON:
-    KÜRESEL PİYASA BÜLTENİ ({time.strftime("%d.%m.%Y")})
+    ELİNDEKİ HAM VERİ:
+    {haberler}
     
-    Piyasa Görünümü
-    - Analiz
-    Riskler
-    - Riskler
-    Fırsatlar
-    - Fırsatlar
+    GÖREVİN:
+    Bu haberlerin içinden şu detayları bul ve raporla:
+    1. CEO/Yönetici Değişiklikleri (Kim geldi, kim gitti?)
+    2. Birleşme & Satın Alma (M&A) (Hangi şirket kimi alıyor?)
+    3. Yeni Anlaşmalar/Kontratlar (Kim kiminle iş yapıyor?)
+    4. Yasal Süreçler/Davalar (Hangi şirkete dava açıldı?)
+    
+    Eğer bu detaylar yoksa, o zaman piyasadaki en sert hareketi yapan hisseyi sebebeiyle yaz.
+    
+    RAPOR FORMATI (Tam olarak bu şablona uy):
+    
+    KÜRESEL ŞİRKET & PİYASA İSTİHBARATI ({time.strftime("%d.%m.%Y")})
+    
+    📢 Şirket Haberleri & Anlaşmalar
+    - [Şirket Adı]: [Olayın özeti - Örn: Apple, yeni CEO olarak X'i atadı.]
+    
+    ⚖️ Yasal & Regülasyon
+    - [Detaylı, somut bilgi]
+    
+    📉📈 Öne Çıkan Hisse Hareketleri
+    - [Şirket]: [Neden yükseldi/düştü?]
+    
+    ⚠️ Kritik Riskler
+    - [Sadece somut riskler]
+
+    KURALLAR:
+    - ASLA "Piyasalar dalgalı" gibi boş laflar etme. İsim ver, rakam ver.
+    - İngilizce haberleri kusursuz Türkçeye çevir.
+    - Emojileri sadece başlıkta kullan.
     """
+
+    headers = {'Content-Type': 'application/json'}
     data = {"contents": [{"parts": [{"text": prompt}]}]}
-    try:
-        r = requests.post(url, headers=headers, data=json.dumps(data))
-        if r.status_code == 200: return r.json()['candidates'][0]['content']['parts'][0]['text']
-    except: pass
-    return None
+
+    # DÖNGÜ BAŞLIYOR: Modelleri sırayla dene
+    for model in model_listesi:
+        print(f"🧠 Deneniyor: {model} ...")
+        
+        # Model ismini düzelt (models/ ekle)
+        api_model_ismi = model if model.startswith("models/") else f"models/{model}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/{api_model_ismi}:generateContent?key={API_KEY}"
+        
+        try:
+            response = requests.post(url, headers=headers, data=json.dumps(data))
+            
+            # Eğer BAŞARILI (200) ise sonucu döndür ve döngüyü bitir
+            if response.status_code == 200:
+                print(f"✅ BAŞARILI! Analizi yapan model: {model}")
+                return response.json()['candidates'][0]['content']['parts'][0]['text']
+            
+            # Eğer KOTA DOLDU (429) ise uyarı ver ve sıradakine geç
+            elif response.status_code == 429:
+                print(f"⚠️ KOTA DOLDU ({model}). Sıradaki modele geçiliyor...")
+                continue # Döngünün başına dön, sonraki modeli al
+            
+            # Başka bir hataysa (örn: 500)
+            else:
+                print(f"❌ Model Hatası ({model}): {response.status_code}. Sıradakine geçiliyor...")
+                continue
+
+        except Exception as e:
+            print(f"❌ Bağlantı hatası: {e}. Sıradakine geçiliyor...")
+            continue
+
+    return None # Hiçbir model çalışmazsa
 
 if __name__ == "__main__":
     if not API_KEY or not ALICI_LISTESI:
         print("❌ Ayarlar eksik (GitHub Secrets kontrol et).")
         sys.exit(1)
 
-    model = calisan_modeli_bul()
+    # 1. Haberleri Çek
     haberler = haberleri_cek()
-    if model and haberler:
-        print("🧠 Analiz yapılıyor...")
-        sonuc = geminiye_sor(haberler, model)
-        if sonuc: telegrama_gonder(sonuc, ALICI_LISTESI)
+    if not haberler:
+        print("❌ Haber bulunamadı.")
+        sys.exit(0)
+
+    # 2. Modelleri Sırala (Zekiden > Hızlıya)
+    model_listesi = modelleri_sirala()
+    
+    # 3. Analiz Yap (Sırayla dener)
+    sonuc = gemini_analiz_yap(haberler, model_listesi)
+    
+    if sonuc:
+        telegrama_gonder(sonuc, ALICI_LISTESI)
+    else:
+        print("❌ HİÇBİR MODEL ÇALIŞMADI. Tüm kotalar dolmuş olabilir.")
+        # Opsiyonel: Hata durumunda telegrama bilgi atabilirsin
+        # telegrama_gonder("⚠️ Sistem Hatası: Tüm yapay zeka modelleri meşgul veya kota dolu.", ALICI_LISTESI)
