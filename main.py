@@ -6,15 +6,14 @@ import requests
 import feedparser
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-from email.utils import parsedate_to_datetime # RSS tarihini anlamak için
+from email.utils import parsedate_to_datetime
 
 # --- AYARLAR ---
 API_KEY = os.environ.get("GOOGLE_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
-# ALICILAR_STR satırını sildik, yerine direkt listeyi yazdık:
 ALICI_LISTESI = ["1628808952", "1126701632"]
-ALICI_LISTESI = ALICILAR_STR.split(",") if ALICILAR_STR else []
+
 
 # --- KAYNAKLAR ---
 RSS_URLS = [
@@ -210,4 +209,5 @@ if __name__ == "__main__":
     sonuc = gemini_analiz_yap(haberler, model_listesi)
     
     if sonuc: telegrama_gonder(sonuc, ALICI_LISTESI)
+
 
