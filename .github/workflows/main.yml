@@ -4,6 +4,7 @@ on:
   schedule:
     # Almanya Saatine Göre Ayarlandı (UTC+1)
     # Sabah 09:00 olsun diye -> 08:00
+    - cron: '0 6 * * *'
     - cron: '0 8 * * *'
     
     # Öğlen 13:00 olsun diye -> 12:00
@@ -11,6 +12,7 @@ on:
     
     # Akşam 18:30 olsun diye -> 17:30
     - cron: '30 17 * * *'
+    - cron: '30 19 * * *'
     
   workflow_dispatch: # Manuel tetikleme butonu
 
